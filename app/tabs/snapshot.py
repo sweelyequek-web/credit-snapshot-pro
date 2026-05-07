@@ -179,6 +179,7 @@ def _build_four_quadrant(
             "Net Gearing %",
             "TTM EBITDA + QoQ Growth",
         ),
+        specs=[[{}, {}], [{}, {"secondary_y": True}]],
         vertical_spacing=0.16, horizontal_spacing=0.08,
     )
 
@@ -213,24 +214,21 @@ def _build_four_quadrant(
     fig.add_trace(go.Bar(
         x=x, y=m["ebitda_ttm"], name="TTM EBITDA",
         marker_color=theme.POS, opacity=0.7,
-    ), row=2, col=2)
+    ), row=2, col=2, secondary_y=False)
     fig.add_trace(go.Scatter(
         x=x, y=m["ebitda_qoq_growth"], name="QoQ Growth %",
         mode="lines+markers", line=dict(color=theme.AMBER, width=1.5),
-        yaxis="y5",
-    ), row=2, col=2)
-    fig.update_layout(
-        yaxis5=dict(
-            overlaying="y4", side="right", showgrid=False,
-            title=dict(text="QoQ %", font=dict(color=theme.AMBER)),
-            tickfont=dict(color=theme.AMBER),
-        ),
-    )
+    ), row=2, col=2, secondary_y=True)
 
     fig.update_yaxes(title_text="x", row=1, col=1)
     fig.update_yaxes(title_text="x", row=1, col=2)
     fig.update_yaxes(title_text="%", row=2, col=1)
-    fig.update_yaxes(title_text="$", row=2, col=2)
+    fig.update_yaxes(title_text="$", row=2, col=2, secondary_y=False)
+    fig.update_yaxes(
+        title_text="QoQ %", row=2, col=2, secondary_y=True,
+        showgrid=False, tickfont=dict(color=theme.AMBER),
+        title_font=dict(color=theme.AMBER),
+    )
 
     fig.update_layout(
         height=600, showlegend=False,
