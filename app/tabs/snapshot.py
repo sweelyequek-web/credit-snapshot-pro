@@ -20,7 +20,7 @@ def render(active_ticker: str, adjusted: bool) -> None:
 
     issuer_row = _issuer_row(active_ticker)
 
-    fund_df, source = data.fetch_fundamentals(active_ticker, quarters=12)
+    fund_df, source = data.fetch_fundamentals(active_ticker, quarters=16)
 
     if fund_df.empty:
         st.error(
@@ -68,10 +68,6 @@ def render(active_ticker: str, adjusted: bool) -> None:
     # Four-quadrant dashboard
     fig, quadrant_figs = _build_four_quadrant(m, leverage_redline, coverage_redline)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-
-    # Maturity wall
-    st.markdown("### Maturity Wall")
-    _render_maturity_wall(active_ticker, m)
 
     # Spread snapshot
     st.markdown("### Spread Snapshot")
@@ -179,6 +175,7 @@ def _build_four_quadrant(
             "Net Gearing %",
             "TTM EBITDA + QoQ Growth",
         ),
+        specs=[[{}, {}], [{}, {"secondary_y": True}]],
         vertical_spacing=0.16, horizontal_spacing=0.08,
     )
 
@@ -213,24 +210,21 @@ def _build_four_quadrant(
     fig.add_trace(go.Bar(
         x=x, y=m["ebitda_ttm"], name="TTM EBITDA",
         marker_color=theme.POS, opacity=0.7,
-    ), row=2, col=2)
+    ), row=2, col=2, secondary_y=False)
     fig.add_trace(go.Scatter(
         x=x, y=m["ebitda_qoq_growth"], name="QoQ Growth %",
         mode="lines+markers", line=dict(color=theme.AMBER, width=1.5),
-        yaxis="y5",
-    ), row=2, col=2)
-    fig.update_layout(
-        yaxis5=dict(
-            overlaying="y4", side="right", showgrid=False,
-            title=dict(text="QoQ %", font=dict(color=theme.AMBER)),
-            tickfont=dict(color=theme.AMBER),
-        ),
-    )
+    ), row=2, col=2, secondary_y=True)
 
     fig.update_yaxes(title_text="x", row=1, col=1)
     fig.update_yaxes(title_text="x", row=1, col=2)
     fig.update_yaxes(title_text="%", row=2, col=1)
-    fig.update_yaxes(title_text="$", row=2, col=2)
+    fig.update_yaxes(title_text="$", row=2, col=2, secondary_y=False)
+    fig.update_yaxes(
+        title_text="QoQ %", row=2, col=2, secondary_y=True,
+        showgrid=False, tickfont=dict(color=theme.AMBER),
+        title_font=dict(color=theme.AMBER),
+    )
 
     fig.update_layout(
         height=600, showlegend=False,
@@ -258,63 +252,6 @@ def _build_four_quadrant(
     quadrant_figs.append(q4)
 
     return fig, quadrant_figs
-
-
-def _render_maturity_wall(ticker: str, m: pd.DataFrame) -> None:
-    """Maturity wall — debt by year with cash and revolver capacity overlays.
-
-    The standard fundamentals feed doesn't include the per-year debt schedule
-    (that's in the 10-K debt note). We surface a clean empty-state with a
-    manual entry path rather than fabricating a schedule.
-    """
-    state_key = f"maturity_schedule_{ticker}"
-    if state_key not in st.session_state:
-        st.session_state[state_key] = pd.DataFrame({
-            "Year": [datetime.utcnow().year + i for i in range(10)],
-            "Maturing Debt": [0.0] * 10,
-        })
-
-    last_cash = float(m["cash"].iloc[-1]) if "cash" in m.columns and not m["cash"].isna().all() else 0.0
-
-    cols = st.columns([3, 1])
-    with cols[0]:
-        st.caption(
-            "Maturity schedules aren't returned by standard fundamentals feeds — they live in "
-            "the 10-K debt note. Enter manually below if needed."
-        )
-        edited = st.data_editor(
-            st.session_state[state_key],
-            key=f"maturity_editor_{ticker}",
-            use_container_width=True,
-            num_rows="fixed",
-        )
-        st.session_state[state_key] = edited
-    with cols[1]:
-        revolver = st.number_input(
-            "Undrawn revolver ($)", min_value=0.0, value=0.0, step=1e8,
-            key=f"revolver_{ticker}",
-        )
-        st.metric("Last Cash + STI", _fmt_money(last_cash))
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=edited["Year"], y=edited["Maturing Debt"], name="Maturing Debt",
-        marker_color=theme.AMBER,
-    ))
-    if last_cash > 0:
-        fig.add_hline(
-            y=last_cash, line_dash="dot", line_color=theme.POS,
-            annotation_text=f"Cash {_fmt_money(last_cash)}",
-            annotation_position="top right",
-        )
-    if revolver > 0:
-        fig.add_hline(
-            y=last_cash + revolver, line_dash="dot", line_color="#4a90e2",
-            annotation_text=f"Cash + Revolver {_fmt_money(last_cash + revolver)}",
-            annotation_position="top left",
-        )
-    fig.update_layout(height=300, xaxis_title="Year", yaxis_title="USD")
-    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_spread_snapshot(ticker: str) -> None:
@@ -388,7 +325,7 @@ def _render_peer_overlay(
     muted_palette = ["#666", "#888", "#aaa", "#999", "#777"]
     for i, peer in enumerate(selected):
         try:
-            df_peer, _ = data.fetch_fundamentals(peer, quarters=12)
+            df_peer, _ = data.fetch_fundamentals(peer, quarters=16)
             if df_peer.empty:
                 continue
             res = metrics.compute(df_peer, adjusted=adjusted)
