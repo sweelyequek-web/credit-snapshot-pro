@@ -96,7 +96,7 @@ def render(active_ticker: str, uploaded_pdf, adjusted: bool) -> None:
 
 
 def _latest_metrics(ticker: str, adjusted: bool) -> dict:
-    fund_df, _ = data.fetch_fundamentals(ticker, quarters=12)
+    fund_df, _, _ = data.fetch_fundamentals(ticker, quarters=12)
     if fund_df.empty:
         return {}
     res = metrics.compute(fund_df, adjusted=adjusted)

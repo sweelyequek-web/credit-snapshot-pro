@@ -20,7 +20,7 @@ def render(active_ticker: str, adjusted: bool) -> None:
 
     issuer_row = _issuer_row(active_ticker)
 
-    fund_df, source = data.fetch_fundamentals(active_ticker, quarters=16)
+    fund_df, source, fmp_error = data.fetch_fundamentals(active_ticker, quarters=16)
 
     if fund_df.empty:
         st.error(
@@ -42,7 +42,7 @@ def render(active_ticker: str, adjusted: bool) -> None:
         return
 
     # Header strip
-    _render_header(active_ticker, issuer_row, source, adjusted)
+    _render_header(active_ticker, issuer_row, source, adjusted, fmp_error)
 
     # AI Credit Summary card
     _render_summary_card(m)
@@ -102,7 +102,10 @@ def _issuer_row(ticker: str) -> dict:
     return row.iloc[0].to_dict()
 
 
-def _render_header(ticker: str, issuer_row: dict, source: str, adjusted: bool) -> None:
+def _render_header(
+    ticker: str, issuer_row: dict, source: str, adjusted: bool,
+    fmp_error: Optional[str] = None,
+) -> None:
     cols = st.columns([3, 1, 1, 1])
     with cols[0]:
         name = issuer_row.get("Issuer Name", "")
@@ -112,6 +115,11 @@ def _render_header(ticker: str, issuer_row: dict, source: str, adjusted: bool) -
             f"{sector or '—'} · Source: {source.upper()} · "
             f"View: {'Adjusted' if adjusted else 'Reported'}"
         )
+        if fmp_error and source != "fmp":
+            st.warning(
+                f"FMP key is set but the request failed — fell back to {source}. "
+                f"Reason: {fmp_error}"
+            )
     with cols[1]:
         st.metric("Internal Rating", issuer_row.get("Internal Rating", "—") or "—")
     with cols[2]:
@@ -325,7 +333,7 @@ def _render_peer_overlay(
     muted_palette = ["#666", "#888", "#aaa", "#999", "#777"]
     for i, peer in enumerate(selected):
         try:
-            df_peer, _ = data.fetch_fundamentals(peer, quarters=16)
+            df_peer, _, _ = data.fetch_fundamentals(peer, quarters=16)
             if df_peer.empty:
                 continue
             res = metrics.compute(df_peer, adjusted=adjusted)
@@ -373,7 +381,12 @@ def _render_liquidity_section(ticker: str) -> None:
                 file_name=f"{ticker}_liquidity.txt", mime="text/plain",
             )
     st.markdown("**3-bullet AI summary** (grounded only in the text above):")
-    st.markdown(llm.summarize_liquidity_section(section))
+    summary_md = llm.summarize_liquidity_section(section)
+    summary_html = _markdown_to_html(summary_md)
+    st.markdown(
+        f'<div class="liquidity-summary">{summary_html}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_pdf_export(
@@ -431,6 +444,41 @@ def _render_pdf_export(
 
 
 # ---------- Formatters ----------
+
+
+def _markdown_to_html(md: str) -> str:
+    """Tiny renderer: bullet lists + **bold** + paragraph breaks. Anything more
+    elaborate isn't expected from the 3-bullet summary prompt."""
+    import html
+    import re
+
+    lines = (md or "").splitlines()
+    out: list[str] = []
+    in_list = False
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.lstrip()
+        if stripped.startswith(("- ", "* ", "• ")):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            item = html.escape(stripped[2:].strip())
+            item = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", item)
+            out.append(f"<li>{item}</li>")
+        elif not stripped:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+        else:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            para = html.escape(stripped)
+            para = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", para)
+            out.append(f"<p>{para}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "\n".join(out)
 
 
 def _fmt(v, suffix: str) -> str:

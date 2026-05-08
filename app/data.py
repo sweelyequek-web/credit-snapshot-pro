@@ -38,47 +38,66 @@ def _fmp_key() -> Optional[str]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_fundamentals(ticker: str, quarters: int = 12) -> tuple[pd.DataFrame, str]:
-    """Return (df, source) where source ∈ {"fmp", "yfinance", "none"}.
+def fetch_fundamentals(
+    ticker: str, quarters: int = 12
+) -> tuple[pd.DataFrame, str, Optional[str]]:
+    """Return (df, source, fmp_error) where source ∈ {"fmp", "yfinance", "none"}.
 
     df is indexed by period-end date (descending), columns include every entry
     from REQUIRED_FIELDS plus a `revenue` column when available. Missing fields
     are NaN — never interpolated.
+
+    fmp_error is None on FMP success or when no FMP key is set; otherwise it
+    carries the FMP failure reason (HTTP status, error message, or empty
+    response) so the UI can surface it instead of silently falling back.
     """
-    df = _try_fmp(ticker, quarters)
+    df, fmp_error = _try_fmp(ticker, quarters)
     if df is not None and not df.empty:
-        return df, "fmp"
+        return df, "fmp", None
     df = _try_yfinance(ticker, quarters)
     if df is not None and not df.empty:
-        return df, "yfinance"
-    return pd.DataFrame(), "none"
+        return df, "yfinance", fmp_error
+    return pd.DataFrame(), "none", fmp_error
 
 
-def _try_fmp(ticker: str, quarters: int) -> Optional[pd.DataFrame]:
+def _try_fmp(ticker: str, quarters: int) -> tuple[Optional[pd.DataFrame], Optional[str]]:
     key = _fmp_key()
     if not key:
-        return None
+        return None, None
     try:
         bs_url = f"{FMP_BASE}/balance-sheet-statement/{ticker}?period=quarter&limit={quarters}&apikey={key}"
         is_url = f"{FMP_BASE}/income-statement/{ticker}?period=quarter&limit={quarters}&apikey={key}"
-        bs = requests.get(bs_url, timeout=20).json()
-        is_ = requests.get(is_url, timeout=20).json()
-        if not isinstance(bs, list) or not isinstance(is_, list) or not bs or not is_:
-            return None
+        bs_resp = requests.get(bs_url, timeout=20)
+        is_resp = requests.get(is_url, timeout=20)
+        for label, resp in (("balance-sheet", bs_resp), ("income-statement", is_resp)):
+            if resp.status_code != 200:
+                return None, f"FMP {label}: HTTP {resp.status_code}"
+        try:
+            bs = bs_resp.json()
+            is_ = is_resp.json()
+        except ValueError:
+            return None, "FMP returned non-JSON response"
+        for label, payload in (("balance-sheet", bs), ("income-statement", is_)):
+            if isinstance(payload, dict):
+                msg = payload.get("Error Message") or payload.get("error") or str(payload)[:200]
+                return None, f"FMP {label}: {msg}"
+            if not isinstance(payload, list) or not payload:
+                return None, f"FMP {label}: empty response (ticker not covered or plan restriction)"
         bs_df = pd.DataFrame(bs).set_index("date")
         is_df = pd.DataFrame(is_).set_index("date")
         df = bs_df.join(is_df, how="outer", lsuffix="_bs", rsuffix="_is")
         df.index = pd.to_datetime(df.index)
         df = df.sort_index(ascending=False)
-        # Ensure every required field exists, even if NaN-filled.
         for f in REQUIRED_FIELDS:
             if f not in df.columns:
                 df[f] = pd.NA
         if "revenue" not in df.columns:
             df["revenue"] = pd.NA
-        return df
-    except Exception:
-        return None
+        return df, None
+    except requests.exceptions.RequestException as e:
+        return None, f"FMP network error: {e}"
+    except Exception as e:
+        return None, f"FMP unexpected error: {e}"
 
 
 def _try_yfinance(ticker: str, quarters: int) -> Optional[pd.DataFrame]:

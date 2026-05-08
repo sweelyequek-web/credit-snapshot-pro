@@ -43,9 +43,19 @@ def install_plotly_template() -> None:
     pio.templates.default = "credit_dark"
 
 
+SANS_STACK = (
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', "
+    "Arial, sans-serif"
+)
+
+
 CSS = f"""
 <style>
-    .stApp {{ background-color: {BG}; color: {TEXT}; font-family: {FONT_STACK}; }}
+    .stApp {{ background-color: {BG}; color: {TEXT}; font-family: {SANS_STACK}; }}
+    .stApp p, .stApp li, .stApp span, .stApp div[data-testid="stMarkdownContainer"] {{
+        font-family: {SANS_STACK};
+    }}
+    .stApp code, .stApp pre, .stApp kbd, .stApp samp {{ font-family: {FONT_STACK}; }}
     section[data-testid="stSidebar"] {{ background-color: {PANEL}; border-right: 1px solid {BORDER}; }}
     .stTabs [data-baseweb="tab-list"] {{ gap: 0; border-bottom: 1px solid {BORDER}; }}
     .stTabs [data-baseweb="tab"] {{
@@ -57,14 +67,17 @@ CSS = f"""
         background-color: {PANEL}; border: 1px solid {BORDER}; border-radius: 4px;
         padding: 12px; font-family: {FONT_STACK};
     }}
-    div[data-testid="stMetricValue"] {{ color: {TEXT}; font-size: 22px; }}
-    div[data-testid="stMetricLabel"] {{ color: {TEXT_MUTED}; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }}
+    div[data-testid="stMetricValue"] {{ color: {TEXT}; font-size: 22px; font-family: {FONT_STACK}; }}
+    div[data-testid="stMetricLabel"] {{
+        color: {TEXT_MUTED}; font-size: 11px; text-transform: uppercase;
+        letter-spacing: 0.05em; font-family: {FONT_STACK};
+    }}
     .stButton button {{
         background-color: {PANEL}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 4px;
-        font-family: {FONT_STACK};
+        font-family: {SANS_STACK};
     }}
     .stButton button:hover {{ border-color: {POS}; color: {POS}; }}
-    h1, h2, h3, h4 {{ color: {TEXT}; font-family: {FONT_STACK}; font-weight: 500; }}
+    h1, h2, h3, h4 {{ color: {TEXT}; font-family: {SANS_STACK}; font-weight: 500; }}
     .rag-green {{ color: {POS}; font-weight: bold; }}
     .rag-amber {{ color: {AMBER}; font-weight: bold; }}
     .rag-red {{ color: {NEG}; font-weight: bold; }}
@@ -81,5 +94,17 @@ CSS = f"""
         background-color: {BORDER}; color: {TEXT}; padding: 2px 8px; border-radius: 2px;
         font-size: 11px; font-family: {FONT_STACK};
     }}
+    .liquidity-summary {{
+        background-color: {PANEL}; border: 1px solid {BORDER}; border-left: 3px solid {POS};
+        border-radius: 4px; padding: 16px 20px; margin: 8px 0 12px 0;
+        font-family: {SANS_STACK}; font-size: 15px; line-height: 1.65;
+        color: {TEXT}; max-width: 900px;
+    }}
+    .liquidity-summary p {{ margin: 0 0 8px 0; font-family: {SANS_STACK}; }}
+    .liquidity-summary ul, .liquidity-summary ol {{
+        margin: 4px 0 0 0; padding-left: 22px; font-family: {SANS_STACK};
+    }}
+    .liquidity-summary li {{ margin-bottom: 8px; font-family: {SANS_STACK}; }}
+    .liquidity-summary li:last-child {{ margin-bottom: 0; }}
 </style>
 """

@@ -80,7 +80,7 @@ def _save_and_validate(df: pd.DataFrame) -> None:
         if not tk:
             continue
         try:
-            fund_df, source = data.fetch_fundamentals(str(tk).upper(), quarters=2)
+            fund_df, source, _ = data.fetch_fundamentals(str(tk).upper(), quarters=2)
             ok = source != "none" and not fund_df.empty
         except Exception:
             ok = False
