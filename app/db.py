@@ -1,10 +1,17 @@
 """Persistence: watchlist, agency ratings, cached extracted triggers.
 
-Single SQLite file (`app.db`) in the working directory. Created and seeded on
-first run.
+Connection resolution (first match wins):
+    1. st.secrets["database_url"] — set in Streamlit Community Cloud
+    2. DATABASE_URL env var — for local dev or other hosts
+    3. SQLite at ./app.db — local fallback
+
+Postgres is recommended on Streamlit Community Cloud because the container's
+filesystem is ephemeral — every redeploy or idle timeout wipes the SQLite
+file, taking the watchlist, ratings, and cached triggers with it.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -23,8 +30,42 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session
 
-DB_PATH = Path("app.db")
-ENGINE = create_engine(f"sqlite:///{DB_PATH}", future=True)
+
+def _normalize_pg_url(url: str) -> str:
+    """Neon and several other providers hand out 'postgres://' URLs;
+    SQLAlchemy 2.x only recognises 'postgresql://'. Also force the psycopg2
+    driver and require SSL (Neon mandates it).
+    """
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+psycopg2" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql+psycopg2://") and "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+    return url
+
+
+def _resolve_database_url() -> str:
+    try:
+        import streamlit as st
+        url = st.secrets.get("database_url", "")  # type: ignore[attr-defined]
+        if url:
+            return _normalize_pg_url(url)
+    except Exception:
+        pass
+    env_url = os.environ.get("DATABASE_URL", "")
+    if env_url:
+        return _normalize_pg_url(env_url)
+    return f"sqlite:///{Path('app.db')}"
+
+
+DATABASE_URL = _resolve_database_url()
+ENGINE = create_engine(
+    DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,  # Neon autosuspends; ping recycles dead connections
+)
 
 
 class Base(DeclarativeBase):

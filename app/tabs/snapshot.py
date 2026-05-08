@@ -91,7 +91,7 @@ def render(active_ticker: str, adjusted: bool) -> None:
 
     # Peer overlay
     st.markdown("### Peer Overlay")
-    _render_peer_overlay(active_ticker, m, leverage_redline, coverage_redline, adjusted)
+    _render_peer_overlay(active_ticker, m, adjusted)
 
     # MD&A liquidity pull
     st.markdown("### MD&A — Liquidity and Capital Resources")
@@ -133,11 +133,6 @@ def _render_header(
             f"{sector or '—'} · Source: {source.upper()} · "
             f"View: {'Adjusted' if adjusted else 'Reported'}"
         )
-        if fmp_error and source != "fmp":
-            st.warning(
-                f"FMP key is set but the request failed — fell back to {source}. "
-                f"Reason: {fmp_error}"
-            )
     with cols[1]:
         st.metric("Internal Rating", issuer_row.get("Internal Rating", "—") or "—")
     with cols[2]:
@@ -169,20 +164,24 @@ def _render_summary_card(m: pd.DataFrame) -> None:
         f"EBITDA TTM trajectory: {', '.join(_fmt(v, '') for v in last4['ebitda_ttm'].tolist())}."
     )
     summary = llm.summarize_credit_metrics(fact_block)
-    st.info(summary)
+    import html as _html
+    st.markdown(
+        f'<div class="summary-card"><p>{_html.escape(summary)}</p></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_kpi_row(m: pd.DataFrame) -> None:
     last = m.iloc[-1]
     cols = st.columns(4)
     with cols[0]:
-        st.metric("Leverage (Net Debt / TTM EBITDA)", _fmt(last["leverage"], "x"))
+        st.metric("Leverage", _fmt(last["leverage"], "x"), help="Net Debt / TTM EBITDA")
     with cols[1]:
-        st.metric("Coverage (TTM EBITDA / TTM Int.)", _fmt(last["coverage"], "x"))
+        st.metric("Coverage", _fmt(last["coverage"], "x"), help="TTM EBITDA / TTM Interest")
     with cols[2]:
-        st.metric("Net Gearing", _fmt(last["net_gearing"], "%"))
+        st.metric("Net Gearing", _fmt(last["net_gearing"], "%"), help="Net Debt / (Net Debt + Equity)")
     with cols[3]:
-        st.metric("Net Debt", _fmt_money(last["net_debt"]))
+        st.metric("Net Debt", _fmt_money(last["net_debt"]), help="Total Debt − Cash − ST Investments")
 
 
 def _build_quarterly_chart(m: pd.DataFrame) -> go.Figure:
@@ -371,8 +370,7 @@ def _render_spread_snapshot(ticker: str) -> None:
 
 
 def _render_peer_overlay(
-    ticker: str, base_m: pd.DataFrame,
-    leverage_redline: float, coverage_redline: float, adjusted: bool,
+    ticker: str, base_m: pd.DataFrame, adjusted: bool,
 ) -> None:
     wl = db.load_watchlist()
     candidates = [t for t in wl["Ticker"].tolist() if t and t != ticker]
@@ -386,21 +384,43 @@ def _render_peer_overlay(
     if not selected:
         return
 
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Leverage", "Coverage"))
-    x = pd.to_datetime(base_m["period_end"])
-    fig.add_trace(
-        go.Scatter(x=x, y=base_m["leverage"], name=ticker, line=dict(color=theme.POS, width=2)),
-        row=1, col=1,
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            "Net Debt", "Quarterly EBITDA",
+            "Net Gearing %", "Cash + ST Investments",
+        ),
+        vertical_spacing=0.20, horizontal_spacing=0.10,
     )
-    fig.add_trace(
-        go.Scatter(x=x, y=base_m["coverage"], name=ticker,
-                   line=dict(color=theme.POS, width=2), showlegend=False),
-        row=1, col=2,
-    )
-    fig.add_hline(y=leverage_redline, line_dash="dash", line_color=theme.NEG, row=1, col=1)
-    fig.add_hline(y=coverage_redline, line_dash="dash", line_color=theme.NEG, row=1, col=2)
 
-    muted_palette = ["#666", "#888", "#aaa", "#999", "#777"]
+    def _add_series(pm_: pd.DataFrame, name: str, color: str, width: int, dash: str) -> None:
+        m_tail = pm_.tail(5)
+        x_dates = pd.to_datetime(m_tail["period_end"])
+        x_labels = [d.strftime("%b %Y") for d in x_dates]
+        line = dict(color=color, width=width)
+        if dash:
+            line["dash"] = dash
+        marker = dict(size=7 if width > 1 else 5)
+        for col_name, row, col in (
+            ("net_debt", 1, 1),
+            ("ebitda_q", 1, 2),
+            ("net_gearing", 2, 1),
+            ("cash", 2, 2),
+        ):
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=m_tail[col_name],
+                    name=name, mode="lines+markers",
+                    line=line, marker=marker,
+                    legendgroup=name,
+                    showlegend=(row == 1 and col == 1),
+                ),
+                row=row, col=col,
+            )
+
+    _add_series(base_m, ticker, theme.POS, 3, "")
+
+    muted_palette = ["#9b9b9b", "#7aa6ff", "#c3a5ff", "#ffb088", "#88e0c5"]
     for i, peer in enumerate(selected):
         try:
             df_peer, _, _ = data.fetch_fundamentals(peer, quarters=16)
@@ -411,21 +431,20 @@ def _render_peer_overlay(
             if pm.empty:
                 continue
             color = muted_palette[i % len(muted_palette)]
-            xp = pd.to_datetime(pm["period_end"])
-            fig.add_trace(
-                go.Scatter(x=xp, y=pm["leverage"], name=peer,
-                           line=dict(color=color, width=1, dash="dot")),
-                row=1, col=1,
-            )
-            fig.add_trace(
-                go.Scatter(x=xp, y=pm["coverage"], name=peer,
-                           line=dict(color=color, width=1, dash="dot"), showlegend=False),
-                row=1, col=2,
-            )
+            _add_series(pm, peer, color, 1, "dot")
         except Exception as e:
             st.warning(f"Could not load peer {peer}: {e}")
 
-    fig.update_layout(height=350, margin=dict(l=40, r=20, t=40, b=40))
+    fig.update_yaxes(title_text="$", row=1, col=1)
+    fig.update_yaxes(title_text="$", row=1, col=2)
+    fig.update_yaxes(title_text="%", row=2, col=1)
+    fig.update_yaxes(title_text="$", row=2, col=2)
+
+    fig.update_layout(
+        height=560, showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+        margin=dict(l=40, r=40, t=60, b=70),
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -441,15 +460,30 @@ def _render_liquidity_section(ticker: str) -> None:
     if url:
         st.caption(f"Source: {url}")
     with st.expander("Verbatim section text", expanded=False):
-        # Truncate display for sanity; spec says verbatim, but a 6000-char wall of
-        # text in Streamlit is unreadable. Show first ~3000, offer download.
-        st.text(section[:3000])
+        # Fixed-height scrollable box keeps the text contained — st.text expands
+        # to fit content and can overflow into siblings on long sections.
+        st.markdown('<div class="verbatim-box">', unsafe_allow_html=True)
+        st.text_area(
+            "Verbatim",
+            value=section[:3000],
+            height=320,
+            disabled=True,
+            label_visibility="collapsed",
+            key=f"verbatim_{ticker}",
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
         if len(section) > 3000:
-            st.caption(f"({len(section) - 3000} more chars truncated)")
-            st.download_button(
-                "Download full section", section.encode("utf-8"),
-                file_name=f"{ticker}_liquidity.txt", mime="text/plain",
-            )
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.caption(f"({len(section) - 3000} more chars truncated)")
+            with cols[1]:
+                st.download_button(
+                    "Download full section",
+                    section.encode("utf-8"),
+                    file_name=f"{ticker}_liquidity.txt",
+                    mime="text/plain",
+                    key=f"liq_dl_{ticker}",
+                )
     st.markdown("**3-bullet AI summary** (grounded only in the text above):")
     summary_md = llm.summarize_liquidity_section(section)
     summary_html = _markdown_to_html(summary_md)

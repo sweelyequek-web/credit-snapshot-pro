@@ -112,13 +112,15 @@ def _latest_metrics(ticker: str, adjusted: bool) -> dict:
 
 def _render_triggers_table(rows: list[dict]) -> None:
     """Custom row-by-row rendering so each row gets a 'View source' expander."""
-    header_cols = st.columns([1.2, 1, 1.5, 0.6, 1, 1, 1.2, 0.8])
+    widths = [1.0, 1.1, 2.0, 0.5, 0.9, 0.9, 1.0, 0.5]
+    header_cols = st.columns(widths)
     headers = ["Agency", "Direction", "Metric", "Op", "Threshold", "Current", "Headroom", "RAG"]
     for col, h in zip(header_cols, headers):
         col.markdown(f"**{h}**")
 
     for r in rows:
-        cols = st.columns([1.2, 1, 1.5, 0.6, 1, 1, 1.2, 0.8])
+        st.markdown('<div class="triggers-row">', unsafe_allow_html=True)
+        cols = st.columns(widths)
         cols[0].write(r["agency"])
         cols[1].write(r["direction"])
         cols[2].write(r["metric"])
@@ -134,6 +136,7 @@ def _render_triggers_table(rows: list[dict]) -> None:
             if r.get("qualitative"):
                 st.caption("Qualitative trigger — no numeric headroom computed.")
             st.caption(f"Confidence: {r.get('confidence', 0.0):.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def _rag_dot(color: str) -> str:

@@ -57,11 +57,10 @@ def main() -> None:
             )
 
         st.markdown("---")
-        st.markdown("**Agency PDF**")
         uploaded_pdf = st.file_uploader(
-            "Upload report for trigger extraction",
+            "Agency report PDF",
             type=["pdf"],
-            label_visibility="collapsed",
+            help="Upload to extract rating triggers in Agency Watch",
         )
         if uploaded_pdf is not None and active_ticker:
             st.caption(f"PDF ready for {active_ticker} · go to Agency Watch")
