@@ -52,7 +52,7 @@ SANS_STACK = (
 CSS = f"""
 <style>
     .stApp {{ background-color: {BG}; color: {TEXT}; font-family: {SANS_STACK}; }}
-    .stApp p, .stApp li, .stApp span, .stApp div[data-testid="stMarkdownContainer"] {{
+    .stApp p, .stApp li, .stApp div[data-testid="stMarkdownContainer"] {{
         font-family: {SANS_STACK};
     }}
     .stApp code, .stApp pre, .stApp kbd, .stApp samp {{ font-family: {FONT_STACK}; }}
