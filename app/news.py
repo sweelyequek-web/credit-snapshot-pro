@@ -239,7 +239,7 @@ def _composite_score(item: dict) -> float:
 
 
 @st.cache_data(ttl=900, show_spinner=False)  # 15 min, per spec
-def fetch_top10(active_tickers: tuple[str, ...]) -> list[dict]:
+def fetch_top_news(active_tickers: tuple[str, ...], limit: int = 30) -> list[dict]:
     """Aggregate across the active watchlist over the last 7 days."""
     if not active_tickers:
         return []
@@ -269,7 +269,7 @@ def fetch_top10(active_tickers: tuple[str, ...]) -> list[dict]:
             continue
         seen.add(key)
         out.append(it)
-        if len(out) == 10:
+        if len(out) == limit:
             break
     return out
 

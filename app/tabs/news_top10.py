@@ -1,4 +1,4 @@
-"""Tab 5 — News (Watchlist Top 10).
+"""Tab 5 — News (Watchlist Top 30).
 
 Aggregates across all Active=True tickers from the last 7 days. Composite
 score = recency + credit-keyword count + sentiment magnitude. 15-min cache.
@@ -9,9 +9,11 @@ import streamlit as st
 
 from app import db, llm, news, theme
 
+TOP_N = 30
+
 
 def render() -> None:
-    st.subheader("Watchlist Top 10")
+    st.subheader(f"Watchlist Top {TOP_N}")
     active = db.active_tickers()
     if not active:
         st.warning("No active tickers in the watchlist.")
@@ -24,11 +26,11 @@ def render() -> None:
     )
 
     if st.button("Force refresh"):
-        news.fetch_top10.clear()
+        news.fetch_top_news.clear()
         st.rerun()
 
     try:
-        top = news.fetch_top10(tuple(active))
+        top = news.fetch_top_news(tuple(active), limit=TOP_N)
     except Exception as e:
         st.error(f"Aggregation failed: {e}")
         return

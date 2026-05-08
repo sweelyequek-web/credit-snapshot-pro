@@ -21,8 +21,9 @@ def render(active_ticker: str, adjusted: bool) -> None:
     issuer_row = _issuer_row(active_ticker)
 
     fund_df, source, fmp_error = data.fetch_fundamentals(active_ticker, quarters=16)
+    annual_df = data.fetch_fundamentals_annual(active_ticker, years=3)
 
-    if fund_df.empty:
+    if fund_df.empty and annual_df.empty:
         st.error(
             f"No fundamentals returned for {active_ticker}. "
             "Set FMP_API_KEY for full coverage, or rely on yfinance fallback. "
@@ -30,22 +31,25 @@ def render(active_ticker: str, adjusted: bool) -> None:
         )
         return
 
-    result = metrics.compute(fund_df, adjusted=adjusted)
+    result = metrics.compute(fund_df, adjusted=adjusted) if not fund_df.empty else metrics.CreditMetricsResult(df=pd.DataFrame())
     m = result.df
+    annual_m = metrics.compute_annual(annual_df, quarterly_result=result, adjusted=adjusted, years=2)
 
-    if m.empty or m["leverage"].dropna().empty:
+    if m.empty and annual_m.empty:
         st.warning(
-            "Not enough quarterly data to compute TTM metrics yet "
-            "(need at least four quarters of EBITDA history)."
+            "Not enough data yet to compute credit metrics. "
+            "yfinance typically returns ~5 quarters; quarterly TTM needs 4 of those to be fully populated."
         )
-        st.dataframe(fund_df.head(8))
+        if not fund_df.empty:
+            st.dataframe(fund_df.head(8))
         return
 
     # Header strip
     _render_header(active_ticker, issuer_row, source, adjusted, fmp_error)
 
     # AI Credit Summary card
-    _render_summary_card(m)
+    if not m.empty:
+        _render_summary_card(m)
 
     # Adjustments expander
     if adjusted and result.adjustments_applied:
@@ -58,16 +62,28 @@ def render(active_ticker: str, adjusted: bool) -> None:
                 st.markdown(f"- {line}")
 
     # Latest metrics row
-    _render_kpi_row(m)
+    if not m.empty:
+        _render_kpi_row(m)
 
     # Per-ticker red-line overrides
     notes = db.get_notes(active_ticker)
     leverage_redline = metrics.parse_redline(notes, "leverage_redline", 3.0)
     coverage_redline = metrics.parse_redline(notes, "coverage_redline", 5.0)
 
-    # Four-quadrant dashboard
-    fig, quadrant_figs = _build_four_quadrant(m, leverage_redline, coverage_redline)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+    # Quarterly snapshot — last 5 raw quarters
+    quadrant_figs: list[go.Figure] = []
+    if not m.empty:
+        st.markdown("### Quarterly Snapshot — Last 5 Quarters")
+        q_fig = _build_quarterly_chart(m.tail(5))
+        st.plotly_chart(q_fig, use_container_width=True, config={"displayModeBar": True})
+
+    # Annual TTM — current TTM + 2 prior fiscal years
+    if not annual_m.empty:
+        st.markdown("### Annual TTM — Current + 2 Prior Years")
+        a_fig, quadrant_figs = _build_annual_chart(annual_m, leverage_redline, coverage_redline)
+        st.plotly_chart(a_fig, use_container_width=True, config={"displayModeBar": True})
+    else:
+        st.caption("Annual statements not available from yfinance for this ticker.")
 
     # Spread snapshot
     st.markdown("### Spread Snapshot")
@@ -82,13 +98,15 @@ def render(active_ticker: str, adjusted: bool) -> None:
     _render_liquidity_section(active_ticker)
 
     # PDF one-pager export
-    st.markdown("---")
-    _render_pdf_export(
-        active_ticker,
-        issuer_row,
-        m,
-        quadrant_figs,
-    )
+    if quadrant_figs:
+        st.markdown("---")
+        _render_pdf_export(
+            active_ticker,
+            issuer_row,
+            m,
+            annual_m,
+            quadrant_figs,
+        )
 
 
 # ---------- Helpers ----------
@@ -167,29 +185,87 @@ def _render_kpi_row(m: pd.DataFrame) -> None:
         st.metric("Net Debt", _fmt_money(last["net_debt"]))
 
 
-def _build_four_quadrant(
-    m: pd.DataFrame, leverage_redline: float, coverage_redline: float
-) -> tuple[go.Figure, list[go.Figure]]:
-    """Returns the combined four-quadrant subplot AND a list of 4 standalone
-    figures (used for PDF export).
+def _build_quarterly_chart(m: pd.DataFrame) -> go.Figure:
+    """Four-panel chart of raw quarterly metrics for the last 5 quarters.
+
+    All values are point-in-time / single-period — no TTM rolling — so every
+    quarter has populated data even when only ~5 quarters of history exist.
     """
-    x = pd.to_datetime(m["period_end"])
+    x_dates = pd.to_datetime(m["period_end"])
+    x_labels = [d.strftime("%b %Y") for d in x_dates]
 
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=(
-            "TTM Leverage (Net Debt / EBITDA)",
-            "TTM Coverage (EBITDA / Interest)",
+            "Net Debt",
+            "Quarterly EBITDA",
             "Net Gearing %",
-            "TTM EBITDA + QoQ Growth",
+            "Cash + ST Investments",
         ),
-        specs=[[{}, {}], [{}, {"secondary_y": True}]],
-        vertical_spacing=0.16, horizontal_spacing=0.08,
+        vertical_spacing=0.20, horizontal_spacing=0.10,
     )
 
+    fig.add_trace(go.Bar(
+        x=x_labels, y=m["net_debt"], name="Net Debt",
+        marker_color=theme.AMBER, opacity=0.85,
+    ), row=1, col=1)
+
+    fig.add_trace(go.Bar(
+        x=x_labels, y=m["ebitda_q"], name="Q EBITDA",
+        marker_color=theme.POS, opacity=0.85,
+    ), row=1, col=2)
+
     fig.add_trace(go.Scatter(
-        x=x, y=m["leverage"], mode="lines+markers", name="Leverage",
-        line=dict(color=theme.POS, width=2),
+        x=x_labels, y=m["net_gearing"], mode="lines+markers", name="Net Gearing",
+        line=dict(color=theme.AMBER, width=2), marker=dict(size=8),
+    ), row=2, col=1)
+
+    fig.add_trace(go.Bar(
+        x=x_labels, y=m["cash"], name="Cash + STI",
+        marker_color="#4a90e2", opacity=0.85,
+    ), row=2, col=2)
+
+    fig.update_yaxes(title_text="$", row=1, col=1)
+    fig.update_yaxes(title_text="$", row=1, col=2)
+    fig.update_yaxes(title_text="%", row=2, col=1)
+    fig.update_yaxes(title_text="$", row=2, col=2)
+
+    fig.update_layout(
+        height=550, showlegend=False,
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    return fig
+
+
+def _build_annual_chart(
+    annual_m: pd.DataFrame, leverage_redline: float, coverage_redline: float
+) -> tuple[go.Figure, list[go.Figure]]:
+    """Four-panel chart of TTM-style metrics across 3 fiscal periods (2 prior
+    FYs + Current TTM). Returns the combined figure and a list of 4 standalone
+    figures used for PDF export.
+    """
+    x = annual_m["period_label"].tolist()
+    bar_colors = [
+        theme.POS if str(lbl).startswith("Current") else theme.TEXT_MUTED
+        for lbl in x
+    ]
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            "Leverage (Net Debt / EBITDA)",
+            "Coverage (EBITDA / Interest)",
+            "Net Gearing %",
+            "EBITDA",
+        ),
+        vertical_spacing=0.20, horizontal_spacing=0.10,
+    )
+
+    fig.add_trace(go.Bar(
+        x=x, y=annual_m["leverage"], name="Leverage",
+        marker_color=bar_colors,
+        text=[_fmt(v, "x") for v in annual_m["leverage"]],
+        textposition="outside",
     ), row=1, col=1)
     fig.add_hline(
         y=leverage_redline, line_dash="dash", line_color=theme.NEG,
@@ -198,9 +274,11 @@ def _build_four_quadrant(
         row=1, col=1,
     )
 
-    fig.add_trace(go.Scatter(
-        x=x, y=m["coverage"], mode="lines+markers", name="Coverage",
-        line=dict(color=theme.POS, width=2),
+    fig.add_trace(go.Bar(
+        x=x, y=annual_m["coverage"], name="Coverage",
+        marker_color=bar_colors,
+        text=[_fmt(v, "x") for v in annual_m["coverage"]],
+        textposition="outside",
     ), row=1, col=2)
     fig.add_hline(
         y=coverage_redline, line_dash="dash", line_color=theme.NEG,
@@ -209,54 +287,46 @@ def _build_four_quadrant(
         row=1, col=2,
     )
 
-    fig.add_trace(go.Scatter(
-        x=x, y=m["net_gearing"], mode="lines", name="Net Gearing",
-        line=dict(color=theme.AMBER, width=1.5),
-        fill="tozeroy", fillcolor="rgba(255,184,0,0.2)",
+    fig.add_trace(go.Bar(
+        x=x, y=annual_m["net_gearing"], name="Net Gearing",
+        marker_color=bar_colors,
+        text=[_fmt(v, "%") for v in annual_m["net_gearing"]],
+        textposition="outside",
     ), row=2, col=1)
 
     fig.add_trace(go.Bar(
-        x=x, y=m["ebitda_ttm"], name="TTM EBITDA",
-        marker_color=theme.POS, opacity=0.7,
-    ), row=2, col=2, secondary_y=False)
-    fig.add_trace(go.Scatter(
-        x=x, y=m["ebitda_qoq_growth"], name="QoQ Growth %",
-        mode="lines+markers", line=dict(color=theme.AMBER, width=1.5),
-    ), row=2, col=2, secondary_y=True)
+        x=x, y=annual_m["ebitda_ttm"], name="EBITDA",
+        marker_color=bar_colors,
+        text=[_fmt_money(v) for v in annual_m["ebitda_ttm"]],
+        textposition="outside",
+    ), row=2, col=2)
 
     fig.update_yaxes(title_text="x", row=1, col=1)
     fig.update_yaxes(title_text="x", row=1, col=2)
     fig.update_yaxes(title_text="%", row=2, col=1)
-    fig.update_yaxes(title_text="$", row=2, col=2, secondary_y=False)
-    fig.update_yaxes(
-        title_text="QoQ %", row=2, col=2, secondary_y=True,
-        showgrid=False, tickfont=dict(color=theme.AMBER),
-        title_font=dict(color=theme.AMBER),
-    )
-
+    fig.update_yaxes(title_text="$", row=2, col=2)
     fig.update_layout(
-        height=600, showlegend=False,
-        margin=dict(l=40, r=40, t=50, b=40),
+        height=550, showlegend=False,
+        margin=dict(l=40, r=40, t=60, b=40),
     )
 
-    # Standalone figures for PDF embedding (kept simpler).
-    quadrant_figs = []
-    q1 = go.Figure(go.Scatter(x=x, y=m["leverage"], mode="lines+markers", line=dict(color=theme.POS)))
+    quadrant_figs: list[go.Figure] = []
+    q1 = go.Figure(go.Bar(x=x, y=annual_m["leverage"], marker_color=bar_colors))
     q1.add_hline(y=leverage_redline, line_dash="dash", line_color=theme.NEG)
-    q1.update_layout(title="TTM Leverage", height=250)
+    q1.update_layout(title="Leverage", height=250)
     quadrant_figs.append(q1)
 
-    q2 = go.Figure(go.Scatter(x=x, y=m["coverage"], mode="lines+markers", line=dict(color=theme.POS)))
+    q2 = go.Figure(go.Bar(x=x, y=annual_m["coverage"], marker_color=bar_colors))
     q2.add_hline(y=coverage_redline, line_dash="dash", line_color=theme.NEG)
-    q2.update_layout(title="TTM Coverage", height=250)
+    q2.update_layout(title="Coverage", height=250)
     quadrant_figs.append(q2)
 
-    q3 = go.Figure(go.Scatter(x=x, y=m["net_gearing"], fill="tozeroy", line=dict(color=theme.AMBER)))
+    q3 = go.Figure(go.Bar(x=x, y=annual_m["net_gearing"], marker_color=bar_colors))
     q3.update_layout(title="Net Gearing %", height=250)
     quadrant_figs.append(q3)
 
-    q4 = go.Figure(go.Bar(x=x, y=m["ebitda_ttm"], marker_color=theme.POS))
-    q4.update_layout(title="TTM EBITDA", height=250)
+    q4 = go.Figure(go.Bar(x=x, y=annual_m["ebitda_ttm"], marker_color=bar_colors))
+    q4.update_layout(title="EBITDA", height=250)
     quadrant_figs.append(q4)
 
     return fig, quadrant_figs
@@ -390,7 +460,8 @@ def _render_liquidity_section(ticker: str) -> None:
 
 
 def _render_pdf_export(
-    ticker: str, issuer_row: dict, m: pd.DataFrame, quadrant_figs: list[go.Figure],
+    ticker: str, issuer_row: dict, m: pd.DataFrame,
+    annual_m: pd.DataFrame, quadrant_figs: list[go.Figure],
 ) -> None:
     if st.button("Download Credit One-Pager (PDF)"):
         # Try to render charts to PNG; if kaleido is missing this returns []
@@ -402,7 +473,15 @@ def _render_pdf_export(
         except Exception:
             chart_pngs = []
 
-        last = m.iloc[-1]
+        # Prefer Current TTM row from annual frame; fall back to last quarterly row.
+        if not annual_m.empty:
+            ttm = annual_m[annual_m["is_ttm"]]
+            last = ttm.iloc[-1] if not ttm.empty else annual_m.iloc[-1]
+        elif not m.empty:
+            last = m.iloc[-1]
+        else:
+            last = pd.Series({"leverage": np.nan, "coverage": np.nan, "net_gearing": np.nan})
+
         summary = (
             f"Leverage {_fmt(last['leverage'], 'x')} · "
             f"Coverage {_fmt(last['coverage'], 'x')} · "

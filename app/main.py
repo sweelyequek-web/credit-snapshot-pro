@@ -6,7 +6,7 @@ Sidebar (persistent across tabs):
     - View toggle: Reported vs. Adjusted
     - Last-Updated timestamps per data source
 
-Five tabs in spec order: Watchlist · Snapshot · Agency · News (Single) · News (Top 10).
+Five tabs in spec order: Watchlist · Snapshot · Agency · News (Single) · News (Top 30).
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def main() -> None:
         "Credit Snapshot",
         "Agency Watch",
         "News — Single Name",
-        "News — Watchlist Top 10",
+        "News — Watchlist Top 30",
     ])
 
     with tabs[0]:
