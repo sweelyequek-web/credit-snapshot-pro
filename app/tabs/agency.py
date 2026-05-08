@@ -119,24 +119,23 @@ def _render_triggers_table(rows: list[dict]) -> None:
         col.markdown(f"**{h}**")
 
     for r in rows:
-        st.markdown('<div class="triggers-row">', unsafe_allow_html=True)
-        cols = st.columns(widths)
-        cols[0].write(r["agency"])
-        cols[1].write(r["direction"])
-        cols[2].write(r["metric"])
-        cols[3].write(r["operator"])
-        cols[4].write(_fmt_threshold(r["threshold"], r.get("unit", "x")))
-        cols[5].write(_fmt_value(r["current"], r.get("unit", "x")))
-        cols[6].write(_fmt_pct(r["headroom"]))
-        cols[7].markdown(_rag_dot(r["color"]), unsafe_allow_html=True)
-        with st.expander(f"View source · page {r.get('page_number') or '?'}"):
-            st.markdown(f"> {r.get('verbatim_quote', '—')}")
-            if r.get("sustained_period"):
-                st.caption(f"Sustained period: {r['sustained_period']}")
-            if r.get("qualitative"):
-                st.caption("Qualitative trigger — no numeric headroom computed.")
-            st.caption(f"Confidence: {r.get('confidence', 0.0):.2f}")
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            cols = st.columns(widths)
+            cols[0].write(r["agency"])
+            cols[1].write(r["direction"])
+            cols[2].write(r["metric"])
+            cols[3].write(r["operator"])
+            cols[4].write(_fmt_threshold(r["threshold"], r.get("unit", "x")))
+            cols[5].write(_fmt_value(r["current"], r.get("unit", "x")))
+            cols[6].write(_fmt_pct(r["headroom"]))
+            cols[7].markdown(_rag_dot(r["color"]), unsafe_allow_html=True)
+            with st.expander(f"View source · page {r.get('page_number') or '?'}"):
+                st.markdown(f"> {r.get('verbatim_quote', '—')}")
+                if r.get("sustained_period"):
+                    st.caption(f"Sustained period: {r['sustained_period']}")
+                if r.get("qualitative"):
+                    st.caption("Qualitative trigger — no numeric headroom computed.")
+                st.caption(f"Confidence: {r.get('confidence', 0.0):.2f}")
 
 
 def _rag_dot(color: str) -> str:
