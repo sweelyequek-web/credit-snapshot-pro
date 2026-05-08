@@ -89,7 +89,7 @@ def render(active_ticker: str, uploaded_pdf, adjusted: bool) -> None:
             color = trig.rag_color(headroom)
         rows.append({**t, "current": current, "headroom": headroom, "color": color})
 
-    _render_triggers_table(rows)
+    _render_triggers_table(rows, active_ticker)
 
 
 # ---------- Helpers ----------
@@ -110,16 +110,23 @@ def _latest_metrics(ticker: str, adjusted: bool) -> dict:
     }
 
 
-def _render_triggers_table(rows: list[dict]) -> None:
-    """Custom row-by-row rendering so each row gets a 'View source' expander."""
+def _render_triggers_table(rows: list[dict], ticker: str) -> None:
+    """Custom row-by-row rendering so each row gets a 'View source' expander.
+
+    Each row's container is keyed by ticker so Streamlit's reconciler tears
+    down and remounts the entire trigger block on ticker switch. Without that,
+    bordered containers and their expanders match by (type, label, position)
+    across runs, retaining open/closed state and producing visually stale rows
+    when the previous ticker had triggers cached.
+    """
     widths = [1.0, 1.1, 2.0, 0.5, 0.9, 0.9, 1.0, 0.5]
     header_cols = st.columns(widths)
     headers = ["Agency", "Direction", "Metric", "Op", "Threshold", "Current", "Headroom", "RAG"]
     for col, h in zip(header_cols, headers):
         col.markdown(f"**{h}**")
 
-    for r in rows:
-        with st.container(border=True):
+    for idx, r in enumerate(rows):
+        with st.container(border=True, key=f"trig_row_{ticker}_{idx}"):
             cols = st.columns(widths)
             cols[0].write(r["agency"])
             cols[1].write(r["direction"])
