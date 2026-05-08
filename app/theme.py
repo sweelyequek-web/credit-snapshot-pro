@@ -181,12 +181,5 @@ CSS = f"""
         font-family: {FONT_STACK} !important; font-size: 12px !important;
         line-height: 1.55 !important; border: 1px solid {BORDER} !important;
     }}
-
-    /* ---------- Triggers table row separation + hover ---------- */
-    .triggers-row {{
-        border-bottom: 1px solid {BORDER}; padding: 6px 0;
-        transition: background-color 0.15s ease;
-    }}
-    .triggers-row:hover {{ background-color: rgba(0,255,65,0.04); }}
 </style>
 """
