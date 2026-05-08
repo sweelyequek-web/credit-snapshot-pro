@@ -9,5 +9,5 @@ yfinance>=0.2.40
 finnhub-python>=2.4
 pypdf>=4.0
 reportlab>=4.0
-anthropic>=0.34
+google-genai>=0.3
 python-dateutil>=2.9

@@ -1,8 +1,12 @@
 """Thin LLM wrapper.
 
-When ANTHROPIC_API_KEY is set, calls Claude. When it isn't, returns a clearly
-labeled placeholder. Never raises into the UI. Triggers extraction and the AI
-summary card both go through here.
+When the Gemini API key is configured, calls Gemini 2.5 Flash. When it isn't,
+returns a clearly labeled placeholder. Never raises into the UI. Triggers
+extraction and the AI summary card both go through here.
+
+Key resolution (first match wins):
+    1. st.secrets["gemini_api_key"]   — Streamlit Community Cloud
+    2. GEMINI_API_KEY env var          — local dev or other hosts
 """
 from __future__ import annotations
 
@@ -10,31 +14,45 @@ import json
 import os
 from typing import Optional
 
+GEMINI_MODEL = "gemini-2.5-flash"
+
+
+def _resolve_api_key() -> Optional[str]:
+    try:
+        import streamlit as st
+        key = st.secrets.get("gemini_api_key", "")  # type: ignore[attr-defined]
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.environ.get("GEMINI_API_KEY") or None
+
 
 def _has_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(_resolve_api_key())
 
 
-def call_claude(prompt: str, system: str = "", max_tokens: int = 2048) -> str:
-    """Returns Claude's text response or a clearly-labeled placeholder."""
-    if not _has_key():
+def call_gemini(prompt: str, system: str = "", max_tokens: int = 2048) -> str:
+    """Returns Gemini's text response or a clearly-labeled placeholder."""
+    api_key = _resolve_api_key()
+    if not api_key:
         return "[no LLM key — placeholder]"
     try:
-        import anthropic
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=max_tokens,
-            system=system or "You are a credit analyst assistant. Be precise and brief.",
-            messages=[{"role": "user", "content": prompt}],
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=system or "You are a credit analyst assistant. Be precise and brief.",
+            max_output_tokens=max_tokens,
         )
-        # Concatenate any text blocks Claude returned.
-        chunks = []
-        for block in msg.content:
-            text = getattr(block, "text", None)
-            if text:
-                chunks.append(text)
-        return "\n".join(chunks).strip() or "[empty LLM response]"
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=config,
+        )
+        text = (response.text or "").strip()
+        return text or "[empty LLM response]"
     except Exception as e:
         return f"[LLM error: {e}]"
 
@@ -77,7 +95,7 @@ Return ONLY a JSON array (no prose, no code fences) where each element is:
         f"{schema_hint}\n\n"
         f"--- TEXT ---\n{narrowed_text[:12000]}"
     )
-    raw = call_claude(prompt, system=system, max_tokens=2000)
+    raw = call_gemini(prompt, system=system, max_tokens=2000)
     return _parse_json_list(raw)
 
 
@@ -94,7 +112,7 @@ def summarize_credit_metrics(metrics_summary: str) -> str:
         "Match the tone of: 'Leverage rose from 2.1x to 2.8x over the last four "
         "quarters as Net Debt grew faster than EBITDA, but coverage remains robust at 9.4x.'"
     )
-    return call_claude(metrics_summary, system=system, max_tokens=200)
+    return call_gemini(metrics_summary, system=system, max_tokens=200)
 
 
 def summarize_liquidity_section(liquidity_text: str) -> str:
@@ -102,12 +120,12 @@ def summarize_liquidity_section(liquidity_text: str) -> str:
     if not liquidity_text.strip():
         return ""
     if not _has_key():
-        return "[no LLM key — placeholder]\n- Liquidity narrative not summarized\n- Set ANTHROPIC_API_KEY to enable\n- Raw text remains visible above"
+        return "[no LLM key — placeholder]\n- Liquidity narrative not summarized\n- Set GEMINI_API_KEY to enable\n- Raw text remains visible above"
     system = (
         "Summarize the supplied 'Liquidity and Capital Resources' section in "
         "exactly 3 bullets. Use only facts present in the text. No speculation."
     )
-    return call_claude(liquidity_text[:8000], system=system, max_tokens=400)
+    return call_gemini(liquidity_text[:8000], system=system, max_tokens=400)
 
 
 def summarize_news_headline(headline: str, summary: str = "") -> str:
@@ -115,7 +133,7 @@ def summarize_news_headline(headline: str, summary: str = "") -> str:
     if not _has_key():
         return summary[:140] if summary else headline[:140]
     system = "Summarize this news item in one short sentence for a credit analyst."
-    return call_claude(f"{headline}\n\n{summary}", system=system, max_tokens=120)
+    return call_gemini(f"{headline}\n\n{summary}", system=system, max_tokens=120)
 
 
 # ---------- Helpers ----------
@@ -125,13 +143,11 @@ def _parse_json_list(raw: str) -> list[dict]:
     """Extract a JSON array from raw LLM output, tolerating fences and prose."""
     if not raw:
         return []
-    # Strip code fences.
     s = raw.strip()
     if s.startswith("```"):
         s = s.split("```", 2)[-2] if s.count("```") >= 2 else s.strip("`")
         if s.startswith("json"):
             s = s[4:]
-    # Find the first '[' and matching ']'.
     start = s.find("[")
     end = s.rfind("]")
     if start == -1 or end == -1 or end <= start:
@@ -139,7 +155,6 @@ def _parse_json_list(raw: str) -> list[dict]:
     try:
         data = json.loads(s[start : end + 1])
         if isinstance(data, list):
-            # Sanity-filter — drop entries missing the required fields.
             return [
                 item for item in data
                 if isinstance(item, dict)

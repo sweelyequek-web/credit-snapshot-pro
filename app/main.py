@@ -20,8 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st  # noqa: E402
 
-from app import db, theme  # noqa: E402
+from app import db, llm, theme  # noqa: E402
 from app.tabs import agency, news_single, news_top10, snapshot, watchlist  # noqa: E402
+
+
+def _llm_configured() -> bool:
+    """Sidebar status — same key resolution as app.llm._has_key()."""
+    return llm._has_key()
 
 
 def main() -> None:
@@ -75,7 +80,7 @@ def main() -> None:
         st.caption(f"FMP: {'on' if os.environ.get('FMP_API_KEY') else 'unset → yfinance'}")
         st.caption(f"Finnhub: {'on' if os.environ.get('FINNHUB_API_KEY') else 'unset'}")
         st.caption(f"NewsAPI: {'on' if os.environ.get('NEWSAPI_KEY') else 'unset'}")
-        st.caption(f"LLM: {'Anthropic' if os.environ.get('ANTHROPIC_API_KEY') else 'unset → placeholders'}")
+        st.caption(f"LLM: {'Gemini' if _llm_configured() else 'unset → placeholders'}")
 
     # ---------- Tabs ----------
     tabs = st.tabs([
