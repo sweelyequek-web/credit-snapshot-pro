@@ -101,7 +101,7 @@ def _try_fmp(ticker: str, quarters: int) -> tuple[Optional[pd.DataFrame], Option
 
 
 def _try_yfinance(ticker: str, quarters: int) -> Optional[pd.DataFrame]:
-    """yfinance translation. Column names differ; we map onto FMP-style names."""
+    """yfinance quarterly statements, translated to FMP-shaped columns."""
     try:
         import yfinance as yf
     except ImportError:
@@ -112,43 +112,76 @@ def _try_yfinance(ticker: str, quarters: int) -> Optional[pd.DataFrame]:
         is_ = t.quarterly_financials
         if bs is None or is_ is None or bs.empty or is_.empty:
             return None
-        # yfinance returns rows = items, cols = dates. Transpose.
-        bs_t = bs.T
-        is_t = is_.T
-
-        def col(df: pd.DataFrame, *candidates: str) -> pd.Series:
-            for c in candidates:
-                if c in df.columns:
-                    return df[c]
-            return pd.Series(pd.NA, index=df.index)
-
-        out = pd.DataFrame(index=bs_t.index)
-        out["shortTermDebt"] = col(bs_t, "Current Debt", "Short Long Term Debt")
-        out["longTermDebt"] = col(bs_t, "Long Term Debt", "Long Term Debt And Capital Lease Obligation")
-        out["capitalLeaseObligations"] = col(
-            bs_t, "Capital Lease Obligations", "Long Term Capital Lease Obligation"
-        ).fillna(0)
-        out["cashAndCashEquivalents"] = col(bs_t, "Cash And Cash Equivalents", "Cash")
-        out["shortTermInvestments"] = col(bs_t, "Other Short Term Investments", "Short Term Investments").fillna(0)
-        out["totalEquity"] = col(bs_t, "Stockholders Equity", "Total Equity Gross Minority Interest")
-
-        is_aligned = is_t.reindex(bs_t.index)
-        out["operatingIncome"] = col(is_aligned, "Operating Income", "Operating Revenue")
-        out["depreciationAndAmortization"] = col(
-            is_aligned, "Reconciled Depreciation", "Depreciation And Amortization In Income Statement"
-        ).fillna(0)
-        out["interestExpense"] = col(is_aligned, "Interest Expense", "Interest Expense Non Operating")
-        out["ebit"] = col(is_aligned, "EBIT", "Operating Income")
-        out["pretaxIncome"] = col(is_aligned, "Pretax Income", "Income Before Tax")
-        out["revenue"] = col(is_aligned, "Total Revenue", "Operating Revenue")
-        out.index = pd.to_datetime(out.index)
-        out = out.sort_index(ascending=False).head(quarters)
-        # Coerce to numeric — yfinance occasionally returns objects.
-        for c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce")
-        return out
+        return _yfinance_translate(bs, is_).head(quarters)
     except Exception:
         return None
+
+
+def _try_yfinance_annual(ticker: str, years: int) -> Optional[pd.DataFrame]:
+    """yfinance annual statements, translated to the same FMP-shaped columns."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None
+    try:
+        t = yf.Ticker(ticker)
+        bs = t.balance_sheet
+        is_ = t.financials
+        if bs is None or is_ is None or bs.empty or is_.empty:
+            return None
+        return _yfinance_translate(bs, is_).head(years)
+    except Exception:
+        return None
+
+
+def _yfinance_translate(bs: pd.DataFrame, is_: pd.DataFrame) -> pd.DataFrame:
+    """Common yfinance → FMP-shape translation. Works for both quarterly and
+    annual statements since yfinance uses identical row labels for both."""
+    bs_t = bs.T
+    is_t = is_.T
+
+    def col(df: pd.DataFrame, *candidates: str) -> pd.Series:
+        for c in candidates:
+            if c in df.columns:
+                return df[c]
+        return pd.Series(pd.NA, index=df.index)
+
+    out = pd.DataFrame(index=bs_t.index)
+    out["shortTermDebt"] = col(bs_t, "Current Debt", "Short Long Term Debt")
+    out["longTermDebt"] = col(bs_t, "Long Term Debt", "Long Term Debt And Capital Lease Obligation")
+    out["capitalLeaseObligations"] = col(
+        bs_t, "Capital Lease Obligations", "Long Term Capital Lease Obligation"
+    ).fillna(0)
+    out["cashAndCashEquivalents"] = col(bs_t, "Cash And Cash Equivalents", "Cash")
+    out["shortTermInvestments"] = col(bs_t, "Other Short Term Investments", "Short Term Investments").fillna(0)
+    out["totalEquity"] = col(bs_t, "Stockholders Equity", "Total Equity Gross Minority Interest")
+
+    is_aligned = is_t.reindex(bs_t.index)
+    out["operatingIncome"] = col(is_aligned, "Operating Income", "Operating Revenue")
+    out["depreciationAndAmortization"] = col(
+        is_aligned, "Reconciled Depreciation", "Depreciation And Amortization In Income Statement"
+    ).fillna(0)
+    out["interestExpense"] = col(is_aligned, "Interest Expense", "Interest Expense Non Operating")
+    out["ebit"] = col(is_aligned, "EBIT", "Operating Income")
+    out["pretaxIncome"] = col(is_aligned, "Pretax Income", "Income Before Tax")
+    out["revenue"] = col(is_aligned, "Total Revenue", "Operating Revenue")
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index(ascending=False)
+    for c in out.columns:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fundamentals_annual(ticker: str, years: int = 3) -> pd.DataFrame:
+    """Annual statements for the most recent `years` fiscal years.
+
+    yfinance-only — FMP plans that block quarterly typically block annual too,
+    and we already surface the FMP error in the snapshot header. Empty
+    DataFrame on failure; the UI degrades gracefully.
+    """
+    df = _try_yfinance_annual(ticker, years)
+    return df if df is not None else pd.DataFrame()
 
 
 def latest_period_end(df: pd.DataFrame) -> str:
