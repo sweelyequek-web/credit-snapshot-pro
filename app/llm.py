@@ -1,8 +1,13 @@
 """Thin LLM wrapper.
 
-When the Gemini API key is configured, calls Gemini 2.5 Flash. When it isn't,
-returns a clearly labeled placeholder. Never raises into the UI. Triggers
-extraction and the AI summary card both go through here.
+When the Gemini API key is configured, calls Gemini 2.5 Flash-Lite (chosen
+over flash for its much higher free-tier RPD). When it isn't, returns a
+clearly labeled placeholder. Never raises into the UI. Triggers extraction
+and the AI summary card both go through here.
+
+All public helpers are wrapped in `@st.cache_data(ttl=86400)` so identical
+inputs reuse the response within a session — critical for the Top-30 news
+tab which fires one call per card.
 
 Key resolution (first match wins):
     1. st.secrets["gemini_api_key"]   — Streamlit Community Cloud
@@ -14,12 +19,14 @@ import json
 import os
 from typing import Optional
 
-GEMINI_MODEL = "gemini-2.5-flash"
+import streamlit as st
+
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+_CACHE_TTL_SECONDS = 86400  # 24h — matches daily quota window
 
 
 def _resolve_api_key() -> Optional[str]:
     try:
-        import streamlit as st
         key = st.secrets.get("gemini_api_key", "")  # type: ignore[attr-defined]
         if key:
             return key
@@ -54,9 +61,13 @@ def call_gemini(prompt: str, system: str = "", max_tokens: int = 2048) -> str:
         text = (response.text or "").strip()
         return text or "[empty LLM response]"
     except Exception as e:
+        msg = str(e)
+        if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            return "[LLM quota reached today — using cached or placeholder text. Resets ~24h.]"
         return f"[LLM error: {e}]"
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS, show_spinner=False)
 def extract_triggers_json(narrowed_text: str, agency_hint: str = "") -> list[dict]:
     """Force structured trigger extraction. Returns a list of trigger dicts.
 
@@ -99,6 +110,7 @@ Return ONLY a JSON array (no prose, no code fences) where each element is:
     return _parse_json_list(raw)
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS, show_spinner=False)
 def summarize_credit_metrics(metrics_summary: str) -> str:
     """One-sentence AI Credit Summary. Inputs are the computed metrics only —
     never news, per the spec. That separation is deliberate: feeding free-form
@@ -115,6 +127,7 @@ def summarize_credit_metrics(metrics_summary: str) -> str:
     return call_gemini(metrics_summary, system=system, max_tokens=200)
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS, show_spinner=False)
 def summarize_liquidity_section(liquidity_text: str) -> str:
     """3-bullet summary grounded only in the supplied MD&A text."""
     if not liquidity_text.strip():
@@ -128,6 +141,7 @@ def summarize_liquidity_section(liquidity_text: str) -> str:
     return call_gemini(liquidity_text[:8000], system=system, max_tokens=400)
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS, show_spinner=False)
 def summarize_news_headline(headline: str, summary: str = "") -> str:
     """One-line summary of a single news item for the Top-10 cards."""
     if not _has_key():
