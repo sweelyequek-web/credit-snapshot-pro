@@ -48,6 +48,9 @@ def render(active_ticker: str, uploaded_pdf, adjusted: bool) -> None:
         db.save_ratings(active_ticker, edited)
         st.success("Ratings saved.")
 
+    # ---------- Current Quantitative Metrics (live from yfinance) ----------
+    _render_current_metrics_panel(active_ticker, adjusted)
+
     # ---------- Triggers ----------
     st.markdown("#### Rating Triggers")
 
@@ -93,6 +96,60 @@ def render(active_ticker: str, uploaded_pdf, adjusted: bool) -> None:
 
 
 # ---------- Helpers ----------
+
+
+def _render_current_metrics_panel(ticker: str, adjusted: bool) -> None:
+    """Three-card snapshot of leverage / coverage / gearing pulled live from
+    yfinance every render. Independent of any uploaded PDF — gives the user
+    an at-a-glance view of where the issuer sits today.
+    """
+    st.markdown("#### Current Quantitative Metrics")
+    fund_df, _, _ = data.fetch_fundamentals(ticker, quarters=12)
+    if fund_df.empty:
+        st.caption(f"No quarterly fundamentals available for {ticker} — yfinance returned empty.")
+        return
+    res = metrics.compute(fund_df, adjusted=adjusted)
+    if res.df.empty:
+        st.caption(f"Computed metrics frame is empty for {ticker}.")
+        return
+    last = res.df.iloc[-1]
+    prior = res.df.iloc[-5] if len(res.df) >= 5 else None
+
+    def _delta(curr_key: str, fmt: str, suffix: str) -> Optional[str]:
+        if prior is None:
+            return None
+        c = _safe_float(last.get(curr_key))
+        p = _safe_float(prior.get(curr_key))
+        if c is None or p is None:
+            return None
+        return f"{fmt % (c - p)}{suffix} vs 4q ago"
+
+    leverage = _safe_float(last.get("leverage"))
+    coverage = _safe_float(last.get("coverage"))
+    gearing = _safe_float(last.get("net_gearing"))
+
+    cols = st.columns(3)
+    cols[0].metric(
+        "Net Debt / EBITDA (TTM)",
+        f"{leverage:.2f}x" if leverage is not None else "—",
+        _delta("leverage", "%+.2f", "x"),
+        delta_color="inverse",
+    )
+    cols[1].metric(
+        "EBITDA / Interest (TTM)",
+        f"{coverage:.2f}x" if coverage is not None else "—",
+        _delta("coverage", "%+.2f", "x"),
+    )
+    cols[2].metric(
+        "Net Gearing",
+        f"{gearing:.1f}%" if gearing is not None else "—",
+        _delta("net_gearing", "%+.1f", "pp"),
+        delta_color="inverse",
+    )
+    st.caption(
+        "Computed live from latest reported quarterly fundamentals (yfinance). "
+        "Reported/Adjusted toggle applies."
+    )
 
 
 def _latest_metrics(ticker: str, adjusted: bool) -> dict:
