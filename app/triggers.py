@@ -170,21 +170,34 @@ def rag_color(headroom: Optional[float]) -> str:
 def map_metric_to_current(metric: str, latest_metrics: dict) -> Optional[float]:
     """Best-effort mapping from an LLM-returned metric name to a computed value.
 
-    Supports the metric names called out in the spec. Anything else returns
-    None and the UI shows '—' for current value.
+    The LLM emits metric names with arbitrary formatting — slashes, spaces,
+    "to", "ratio" suffixes, "adjusted" / "gross" / "net" qualifiers, etc. We
+    normalize aggressively to a compact key, then match on substring fragments.
+    Anything we can't resolve returns None and the UI shows '—'.
     """
     if not metric:
         return None
-    m = metric.lower().replace(" ", "")
+    # Drop separators and noise words, lowercase, collapse "to" → "" so
+    # "debt to ebitda" and "debt/ebitda" both become "debtebitda".
+    m = metric.lower()
+    for noise in ("ratio", "adjusted", "gross", " to "):
+        m = m.replace(noise, "")
+    m = re.sub(r"[\s/\-_.,()]+", "", m)
+
     leverage = latest_metrics.get("leverage")
     coverage = latest_metrics.get("coverage")
     gearing = latest_metrics.get("net_gearing")
-    if any(k in m for k in ["debt/ebitda", "netdebt/ebitda", "leverage"]):
+    # FFO/Debt is genuinely not derivable from our yfinance feed.
+    if "ffo" in m and "debt" in m:
+        return None
+    # Leverage variants — anything mentioning debt + ebitda, or "leverage" alone.
+    if ("debt" in m and "ebitda" in m) or "leverage" in m:
         return leverage
-    if any(k in m for k in ["ebitda/interest", "interestcoverage", "coverage"]):
+    # Coverage variants — ebitda or operating-income over interest, or "coverage" alone.
+    if ("interest" in m and ("ebitda" in m or "coverage" in m or "operatingincome" in m)) \
+            or "interestcoverage" in m or m == "coverage":
         return coverage
-    if "gearing" in m or "debttoequity" in m or "debt/equity" in m:
+    # Gearing / debt-to-equity variants.
+    if "gearing" in m or ("debt" in m and "equity" in m):
         return gearing
-    if "ffo/debt" in m:
-        return None  # FFO not in our standard feed; surface as "—"
     return None

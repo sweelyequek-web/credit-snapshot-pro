@@ -46,20 +46,24 @@ def main() -> None:
         st.caption("Buy-side credit dashboard")
 
         active_list = db.active_tickers()
+        # Honor ?ticker=... query param from Top-10 click-throughs.
+        qp_ticker = st.query_params.get("ticker", "")
+        if isinstance(qp_ticker, list):
+            qp_ticker = qp_ticker[0] if qp_ticker else ""
+        default_idx = (
+            active_list.index(qp_ticker) if qp_ticker in active_list else (0 if active_list else None)
+        )
+        active_ticker = st.selectbox(
+            "Active Ticker",
+            active_list,
+            index=default_idx,
+            accept_new_options=True,
+            placeholder="Pick from watchlist or type any ticker",
+            help="Type any symbol (e.g. NVDA) to spot-check a non-watchlist name.",
+        )
+        active_ticker = (active_ticker or "").strip().upper()
         if not active_list:
-            st.warning("No active tickers. Add some in the Watchlist tab.")
-            active_ticker = ""
-        else:
-            # Honor ?ticker=... query param from Top-10 click-throughs.
-            qp_ticker = st.query_params.get("ticker", "")
-            if isinstance(qp_ticker, list):
-                qp_ticker = qp_ticker[0] if qp_ticker else ""
-            default_idx = (
-                active_list.index(qp_ticker) if qp_ticker in active_list else 0
-            )
-            active_ticker = st.selectbox(
-                "Active Ticker", active_list, index=default_idx,
-            )
+            st.caption("Watchlist is empty — type a ticker above or add some in the Watchlist tab.")
 
         st.markdown("---")
         uploaded_pdf = st.file_uploader(

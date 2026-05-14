@@ -374,13 +374,14 @@ def _render_peer_overlay(
 ) -> None:
     wl = db.load_watchlist()
     candidates = [t for t in wl["Ticker"].tolist() if t and t != ticker]
-    if not candidates:
-        st.caption("Add more tickers to the watchlist to enable peer overlay.")
-        return
     selected = st.multiselect(
-        "Select up to 5 peers", candidates, default=[],
+        "Select up to 5 peers (or type any ticker)", candidates, default=[],
         max_selections=5, key=f"peers_{ticker}",
+        accept_new_options=True,
+        placeholder="Pick from watchlist or type any ticker",
     )
+    selected = [t.strip().upper() for t in selected if t and t.strip()]
+    selected = [t for t in selected if t != ticker]
     if not selected:
         return
 
